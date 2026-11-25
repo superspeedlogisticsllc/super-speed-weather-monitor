@@ -284,115 +284,75 @@ def esc(value):
 
 
 def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None):
+    """Concise report: regions, states, and major metro reference points only."""
     now = datetime.now(EASTERN)
-    counts = Counter(alert["tier"] for alert in alerts)
-    state_counts = Counter(state for alert in alerts for state in alert["states"])
-    top_states = state_counts.most_common(10)
-
-    high_wind_states = sorted({
-        state for alert in alerts
-        if any(alert["event"].lower().startswith(term) for term in HIGH_WIND_EVENTS)
-        for state in alert["states"]
-    })
-    snow_ice_states = sorted({
-        state for alert in alerts
-        if any(term in alert["event"].lower() for term in SNOW_ICE_EVENTS)
-        for state in alert["states"]
-    })
-
-    grouped = defaultdict(list)
+    counts = Counter(a["tier"] for a in alerts)
+    by_state = defaultdict(list)
     for alert in alerts:
         for state in alert["states"]:
-            grouped[(region_for(state), state)].append(alert)
+            by_state[state].append(alert)
+    top_states = Counter({s: len(v) for s, v in by_state.items()}).most_common(10)
+    wind_states = sorted({s for a in alerts if any(a["event"].lower().startswith(x) for x in HIGH_WIND_EVENTS) for s in a["states"]})
+    snow_states = sorted({s for a in alerts if any(x in a["event"].lower() for x in SNOW_ICE_EVENTS) for s in a["states"]})
 
-    tier_colors = {1: "#b91c1c", 2: "#c2410c", 3: "#a16207"}
-    tier_names = {
-        1: "TIER 1 — CRITICAL / IMMEDIATE REVIEW",
-        2: "TIER 2 — HIGH CAUTION",
-        3: "TIER 3 — MODERATE / MONITOR",
+    major_cities = {
+        "AL":"Birmingham, Montgomery, Mobile", "AK":"Anchorage, Fairbanks, Juneau", "AZ":"Phoenix, Tucson, Flagstaff",
+        "AR":"Little Rock, Fort Smith, Fayetteville", "CA":"Los Angeles, San Francisco, San Diego, Sacramento",
+        "CO":"Denver, Colorado Springs, Fort Collins", "CT":"Hartford, New Haven, Bridgeport", "DE":"Wilmington, Dover",
+        "DC":"Washington, DC", "FL":"Miami, Orlando, Tampa, Jacksonville", "GA":"Atlanta, Savannah, Augusta",
+        "HI":"Honolulu, Hilo", "ID":"Boise, Idaho Falls", "IL":"Chicago, Springfield, Peoria",
+        "IN":"Indianapolis, Fort Wayne, South Bend", "IA":"Des Moines, Cedar Rapids, Davenport", "KS":"Wichita, Topeka",
+        "KY":"Louisville, Lexington, Bowling Green", "LA":"New Orleans, Baton Rouge, Shreveport", "ME":"Portland, Bangor",
+        "MD":"Baltimore, Frederick, Salisbury", "MA":"Boston, Worcester, Springfield", "MI":"Detroit, Grand Rapids, Lansing",
+        "MN":"Minneapolis–St. Paul, Duluth, Rochester", "MS":"Jackson, Gulfport, Hattiesburg", "MO":"St. Louis, Kansas City, Springfield",
+        "MT":"Billings, Missoula, Great Falls", "NE":"Omaha, Lincoln, Grand Island", "NV":"Las Vegas, Reno, Elko",
+        "NH":"Manchester, Concord, Portsmouth", "NJ":"Newark, Trenton, Atlantic City", "NM":"Albuquerque, Santa Fe, Las Cruces",
+        "NY":"New York City, Buffalo, Rochester, Albany", "NC":"Charlotte, Raleigh, Greensboro, Wilmington", "ND":"Fargo, Bismarck",
+        "OH":"Columbus, Cleveland, Cincinnati, Toledo", "OK":"Oklahoma City, Tulsa, Lawton", "OR":"Portland, Salem, Eugene, Bend",
+        "PA":"Philadelphia, Pittsburgh, Harrisburg, Allentown", "RI":"Providence, Warwick, Newport", "SC":"Charleston, Columbia, Greenville",
+        "SD":"Sioux Falls, Rapid City", "TN":"Nashville, Memphis, Knoxville, Chattanooga", "TX":"Houston, Dallas–Fort Worth, Austin, San Antonio",
+        "UT":"Salt Lake City, St. George, Provo", "VT":"Burlington, Rutland, Montpelier", "VA":"Richmond, Virginia Beach, Roanoke, Northern Virginia",
+        "WA":"Seattle, Spokane, Tacoma, Yakima", "WV":"Charleston, Morgantown, Huntington", "WI":"Milwaukee, Madison, Green Bay",
+        "WY":"Cheyenne, Casper, Gillette"
     }
-
-    def alert_card(alert):
-        color = tier_colors[alert["tier"]]
-        source_link = (f'<p style="margin:4px 0;"><b>NWS source:</b> <a href="{esc(alert["url"])}">Open official alert</a></p>'
-                       if alert["url"] else "")
-        return f"""
-        <div style="border:1px solid #d1d5db;border-left:6px solid {color};padding:13px;margin:10px 0;border-radius:5px;background:#fff;">
-          <div style="font-size:12px;font-weight:bold;color:{color};">{esc(tier_names[alert['tier']])}</div>
-          <h3 style="margin:6px 0 8px;color:#111827;">{esc(alert['event'])}</h3>
-          <p style="margin:4px 0;"><b>Severity / Urgency / Certainty:</b> {esc(alert['severity'])} / {esc(alert['urgency'])} / {esc(alert['certainty'])}</p>
-          <p style="margin:4px 0;"><b>Affected counties / zones:</b> {esc(alert['area'])}</p>
-          <p style="margin:4px 0;"><b>Effective:</b> {esc(alert['effective'])} &nbsp; <b>Expires:</b> {esc(alert['expires'])}</p>
-          <p style="margin:7px 0;"><b>Headline:</b> {esc(alert['headline'])}</p>
-          <p style="margin:7px 0;"><b>Cargo-van driving impact (NWS text):</b> {esc(alert['impact'])}</p>
-          {source_link}
-        </div>"""
-
-    body_sections = []
-    region_order = list(REGIONS.keys()) + ["Other"]
-    for region in region_order:
-        region_states = sorted(state for reg, state in grouped if reg == region)
-        if not region_states:
+    colors = {1:"#b91c1c", 2:"#c2410c", 3:"#a16207"}
+    labels = {1:"CRITICAL", 2:"HIGH", 3:"MODERATE"}
+    region_blocks, region_summary = [], []
+    for region, members in REGIONS.items():
+        states = sorted(set(by_state) & members)
+        if not states:
             continue
-        region_html = [f'<h2 style="background:#1f2937;color:#fff;padding:10px;font-size:17px;">{esc(region)}</h2>']
-        for state in region_states:
-            items = sorted(grouped[(region, state)], key=lambda a: (a["tier"], a["event"]))
-            region_html.append(f'<h3 style="color:#1d4ed8;border-bottom:1px solid #cbd5e1;padding-bottom:5px;">{esc(state)} — {len(items)} alert(s)</h3>')
-            region_html.extend(alert_card(item) for item in items)
-        body_sections.append("\n".join(region_html))
+        rows = []
+        for state in states:
+            items = by_state[state]
+            unique = {a["id"] or (a["event"], a["area"], a["effective"]): a for a in items}.values()
+            tier_counts = Counter(a["tier"] for a in unique)
+            hazards = sorted({a["event"] for a in items})
+            badges = " ".join(f'<span style="display:inline-block;background:{colors[t]};color:white;padding:4px 7px;border-radius:3px;margin:2px;">{labels[t]} {tier_counts[t]}</span>' for t in (1,2,3) if tier_counts[t])
+            hazard_text = "; ".join(hazards[:4]) + (f"; +{len(hazards)-4} more" if len(hazards)>4 else "")
+            rows.append(f'<div style="border:1px solid #d1d5db;border-left:5px solid #64748b;padding:10px 12px;margin:8px 0;"><b style="font-size:17px;">{esc(state)}</b> <span style="color:#4b5563;font-size:12px;">({len(items)} alert-state occurrences)</span><div style="margin:5px 0;">{badges}</div><p style="margin:5px 0;"><b>Hazards:</b> {esc(hazard_text)}</p><p style="margin:5px 0;"><b>Major cities / metro areas to watch:</b> {esc(major_cities.get(state, "Not listed"))}</p></div>')
+        region_blocks.append(f'<h2 style="background:#1f2937;color:white;padding:10px;font-size:17px;margin-top:20px;">{esc(region)}</h2>' + "".join(rows))
+        region_summary.append(f"{region}: {len(states)} affected state(s)")
 
-    top_html = ("".join(f"<li><b>{esc(state)}</b>: {count} alert-state occurrence(s)</li>" for state, count in top_states)
-                if top_states else "<li>No active qualifying alerts in the configured state list.</li>")
-    wind_html = ", ".join(high_wind_states) if high_wind_states else "None identified from active alert event names."
-    snow_html = ", ".join(snow_ice_states) if snow_ice_states else "None identified from active alert event names."
-    error_html = (
-        f'<div style="background:#fee2e2;border:1px solid #ef4444;padding:12px;color:#991b1b;"><b>LIVE DATA FETCH ERROR:</b> {esc(fetch_error)}<br>Alert data is unavailable for this run. This is NOT an all-clear report.</div>'
-        if fetch_error else ""
-    )
-    quiet_html = (
-        '<p style="padding:12px;background:#ecfdf5;border:1px solid #10b981;">The live NWS request succeeded, and no qualifying active land-transport alerts were returned for the configured states at this check. This is not a guarantee of safe roads.</p>'
-        if not alerts and not fetch_error else ""
-    )
-    unique_count = len(alerts)
+    top_html = "".join(f"<li><b>{esc(s)}</b>: {n} alert-state occurrences</li>" for s,n in top_states) or "<li>No qualifying active alerts.</li>"
+    wind_html = ", ".join(wind_states) or "None identified"
+    snow_html = ", ".join(snow_states) or "None identified"
+    error_html = f'<div style="background:#fee2e2;padding:12px;color:#991b1b;"><b>LIVE DATA FETCH ERROR:</b> {esc(fetch_error)}. This is NOT an all-clear report.</div>' if fetch_error else ""
+    quiet_html = '<p style="padding:12px;background:#ecfdf5;">Live NWS request succeeded; no qualifying active land-transport alerts were returned. This is not a guarantee of safe roads.</p>' if not alerts and not fetch_error else ""
     fetched_text = fetched_at.astimezone(EASTERN).strftime("%A, %B %d, %Y at %I:%M:%S %p ET") if fetched_at else "Unavailable — fetch failed"
-    html_body = f"""<!doctype html>
-<html><body style="margin:0;padding:18px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
-<div style="max-width:950px;margin:auto;background:#fff;padding:20px;border-radius:8px;">
-  <div style="background:#0f172a;color:#fff;padding:18px;border-radius:6px;">
-    <h1 style="margin:0;font-size:23px;">Super Speed Logistics — U.S. Weather Dispatch Report</h1>
-    <p style="margin:7px 0 0;">Email generated {esc(now.strftime('%A, %B %d, %Y at %I:%M %p ET'))}</p>
-    <p style="margin:5px 0 0;">Live NWS data retrieval: {esc(fetched_text)} | Automated 4-hour monitor</p>
-  </div>
-  {error_html}
-  <h2>Executive Dispatch Summary</h2>
-  <table role="presentation" style="width:100%;border-collapse:collapse;text-align:center;">
-    <tr>
-      <td style="padding:13px;background:#fee2e2;border:1px solid #fff;"><div style="font-size:12px;">TIER 1 — CRITICAL</div><b style="font-size:26px;">{counts[1]}</b></td>
-      <td style="padding:13px;background:#ffedd5;border:1px solid #fff;"><div style="font-size:12px;">TIER 2 — HIGH</div><b style="font-size:26px;">{counts[2]}</b></td>
-      <td style="padding:13px;background:#fef3c7;border:1px solid #fff;"><div style="font-size:12px;">TIER 3 — MODERATE</div><b style="font-size:26px;">{counts[3]}</b></td>
-    </tr>
-  </table>
-  <p><b>Unique qualifying active alerts:</b> {unique_count} &nbsp; | &nbsp; <b>States represented:</b> {len(state_counts)}</p>
-  <p><b>Total NWS alert records retrieved:</b> {raw_nws_count} &nbsp; | &nbsp; <b>API pages retrieved:</b> {page_count}</p>
-  <h3>Top 10 Most Impacted States</h3><ol>{top_html}</ol>
-  <p style="font-size:12px;color:#4b5563;">State rankings count each unique alert once in every state it affects. A multi-state alert therefore appears in multiple state totals, but only once in the unique-alert total.</p>
-  <div style="background:#fee2e2;border-left:6px solid #b91c1c;padding:12px;margin:12px 0;">
-    <h3 style="margin:0 0 6px;color:#991b1b;">High-Wind / Blow-Over Hazard Alert States</h3>
-    <b>{esc(wind_html)}</b><p style="margin:6px 0 0;">Listed only when the official NWS event name identifies a wind, tornado, severe-thunderstorm, or dust-storm hazard. Review forecast gusts, vehicle limits, bridges, exposed roads, and company stop-work policy before dispatch.</p>
-  </div>
-  <div style="background:#e0f2fe;border-left:6px solid #0369a1;padding:12px;margin:12px 0;">
-    <h3 style="margin:0 0 6px;color:#075985;">Snow / Ice / Freezing-Hazard Alert States</h3>
-    <b>{esc(snow_html)}</b><p style="margin:6px 0 0;">Listed from official NWS snow/ice event names. Check each alert's details for precipitation type and amounts; black ice is not assumed unless the NWS text says so.</p>
-  </div>
-  {quiet_html}
-  <h2>Detailed Alerts by Region and State</h2>
-  {''.join(body_sections) if body_sections else '<p>No alert details to display.</p>'}
-  <hr style="border:0;border-top:1px solid #d1d5db;margin-top:25px;">
-  <p style="font-size:12px;color:#4b5563;">Live source: National Weather Service API (api.weather.gov), active alerts endpoint. All timestamps displayed in U.S. Eastern Time. Classification is an operational screening aid, not a safety determination. Always verify live road conditions, closures, local forecasts, and carrier stop-work procedures. GitHub Actions scheduled runs may be delayed by GitHub; this monitor runs on the configured four-hour UTC schedule when the service executes it.</p>
-</div></body></html>"""
-    subject = f"Weather Dispatch: {counts[1]} Critical | {counts[2]} High | {counts[3]} Moderate — {now:%b %d %I:%M %p ET}"
+    html_body = f'''<!doctype html><html><body style="margin:0;padding:18px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;"><div style="max-width:900px;margin:auto;background:white;padding:20px;border-radius:8px;">
+    <div style="background:#0f172a;color:white;padding:18px;border-radius:6px;"><h1 style="margin:0;font-size:23px;">Super Speed Logistics — U.S. Weather Dispatch Overview</h1><p>Email generated {esc(now.strftime('%A, %B %d, %Y at %I:%M %p ET'))}</p><p>Live NWS retrieval: {esc(fetched_text)} | Automated 4-hour monitor</p></div>
+    {error_html}<h2>National Alert Summary</h2><table role="presentation" style="width:100%;text-align:center;border-collapse:collapse;"><tr><td style="padding:12px;background:#fee2e2;">CRITICAL<br><b style="font-size:25px;">{counts[1]}</b></td><td style="padding:12px;background:#ffedd5;">HIGH<br><b style="font-size:25px;">{counts[2]}</b></td><td style="padding:12px;background:#fef3c7;">MODERATE<br><b style="font-size:25px;">{counts[3]}</b></td></tr></table>
+    <p><b>Unique qualifying alerts:</b> {len(alerts)} | <b>States represented:</b> {len(by_state)} | <b>NWS records retrieved:</b> {raw_nws_count} | <b>API pages:</b> {page_count}</p>{quiet_html}
+    <h2>Regional Overview</h2><ul>{''.join(f'<li>{esc(x)}</li>' for x in region_summary) or '<li>No affected regions.</li>'}</ul>
+    <h2>Top 10 States to Watch</h2><ol>{top_html}</ol>
+    <div style="background:#fee2e2;border-left:5px solid #b91c1c;padding:12px;margin:12px 0;"><b>Wind / Blow-Over Risk States:</b><br>{esc(wind_html)}</div>
+    <div style="background:#e0f2fe;border-left:5px solid #0369a1;padding:12px;margin:12px 0;"><b>Snow / Ice Risk States:</b><br>{esc(snow_html)}</div>
+    <h2>States and Major Cities by Region</h2>{''.join(region_blocks) or '<p>No state summaries to display.</p>'}
+    <p style="margin-top:18px;padding:10px;background:#f3f4f6;font-size:12px;color:#4b5563;"><b>City note:</b> Major cities are regional reference points in states with active alerts. Their listing does NOT confirm that the city itself is inside an alert polygon. County-by-county and zone-by-zone details are intentionally omitted. Open the official NWS alert when exact boundaries or local road impacts are needed.</p>
+    <hr><p style="font-size:12px;color:#4b5563;">Live source: National Weather Service API (api.weather.gov), active alerts endpoint. All timestamps are Eastern Time. This is an operational screening aid, not a safety determination. Verify road conditions, closures, forecasts, and company stop-work procedures before dispatch. GitHub Actions scheduled runs may be delayed.</p></div></body></html>'''
+    subject = f"Weather Dispatch Overview: {counts[1]} Critical | {counts[2]} High | {counts[3]} Moderate — {now:%b %d %I:%M %p ET}"
     return subject, html_body
-
 
 def send_email(subject, html_body):
     sender = os.environ.get("SENDER_EMAIL", "").strip()
