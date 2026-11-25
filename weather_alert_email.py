@@ -1,95 +1,100 @@
-#!/usr/bin/env python3
-"""
-Super Speed Logistics — U.S. NWS Weather Dispatch Alert Monitor
+<td style="padding:13px;background:#ffedd5;border:1px solid #fff;"><div style="font-size:12px;">TIER 2 — HIGH</div><b style="font-size:26px;">{counts[2]}</b></td>
+      <td style="padding:13px;background:#fef3c7;border:1px solid #fff;"><div style="font-size:12px;">TIER 3 — MODERATE</div><b style="font-size:26px;">{counts[3]}</b></td>
+    </tr>
+  </table>
+  <p><b>Total qualifying alerts:</b> {report_count} &nbsp; | &nbsp; <b>States represented:</b> {len(state_counts)}</p>
+  <h3>Top 10 Most Impacted States</h3><ol>{top_html}</ol>
+  <div style="background:#fee2e2;border-left:6px solid #b91c1c;padding:12px;margin:12px 0;">
+    <h3 style="margin:0 0 6px;color:#991b1b;">High-Wind &amp; Blow-Over Risk States</h3>
+    <b>{esc(wind_html)}</b>
+    <p style="margin:6px 0 0;">High-roof cargo vans have increased crosswind exposure. Review actual gust forecasts, vehicle limits, bridges, exposed roads, and company stop-work policy before dispatch.</p>
+  </div>
+  <div style="background:#e0f2fe;border-left:6px solid #0369a1;padding:12px;margin:12px 0;">
+    <h3 style="margin:0 0 6px;color:#075985;">Active Snow / Ice / Black-Ice-Related Alert States</h3>
+    <b>{esc(snow_html)}</b>
+    <p style="margin:6px 0 0;">Expect rapidly changing traction and visibility where applicable. Check state 511 road conditions and local restrictions before moving.</p>
+  </div>
+  {quiet_html}
+  <h2>Detailed Alerts by Region and State</h2>
+  {''.join(body_sections) if body_sections else '<p>No alert details to display.</p>'}
+  <hr style="border:0;border-top:1px solid #d1d5db;margin-top:25px;">
+  <p style="font-size:12px;color:#4b5563;">Source: National Weather Service API (api.weather.gov). Times shown in U.S. Eastern Time. Multi-state alerts appear under each affected state, so state-level entries may exceed the unique alert total. Classification is an operational screening aid, not a safety determination. Always verify live road conditions, closures, local forecasts, and carrier stop-work procedures.</p>
+</div></body></html>"""
 
-Uses the public National Weather Service API (no API key required).
-Sends an HTML dispatch report through Gmail SMTP using GitHub Actions secrets.
-
-Required environment variables:
-  SENDER_EMAIL
-  SENDER_APP_PASSWORD
-  RECIPIENT_EMAIL
-"""
-
-import html
-import json
-import os
-import smtplib
-import ssl
-import sys
-import time
-import urllib.error
-import urllib.request
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from zoneinfo import ZoneInfo
-
-
-# Replace the contact address below with a monitored business email address.
-USER_AGENT = "SuperSpeedLogisticsWeatherMonitor/1.0 (contact: YOUR_EMAIL@example.com)"
-NWS_URL = (
-    "https://api.weather.gov/alerts/active"
-    "?status=actual&message_type=alert,update"
-)
-EASTERN = ZoneInfo("America/New_York")
-
-# State abbreviations are taken from NWS UGC/SAME identifiers and area descriptions.
-STATE_NAMES = {
-    "AL":"Alabama","AK":"Alaska","AZ":"Arizona","AR":"Arkansas","CA":"California",
-    "CO":"Colorado","CT":"Connecticut","DE":"Delaware","FL":"Florida","GA":"Georgia",
-    "HI":"Hawaii","ID":"Idaho","IL":"Illinois","IN":"Indiana","IA":"Iowa",
-    "KS":"Kansas","KY":"Kentucky","LA":"Louisiana","ME":"Maine","MD":"Maryland",
-    "MA":"Massachusetts","MI":"Michigan","MN":"Minnesota","MS":"Mississippi",
-    "MO":"Missouri","MT":"Montana","NE":"Nebraska","NV":"Nevada",
-    "NH":"New Hampshire","NJ":"New Jersey","NM":"New Mexico","NY":"New York",
-    "NC":"North Carolina","ND":"North Dakota","OH":"Ohio","OK":"Oklahoma",
-    "OR":"Oregon","PA":"Pennsylvania","RI":"Rhode Island","SC":"South Carolina",
-    "SD":"South Dakota","TN":"Tennessee","TX":"Texas","UT":"Utah","VT":"Vermont",
-    "VA":"Virginia","WA":"Washington","WV":"West Virginia","WI":"Wisconsin",
-    "WY":"Wyoming","DC":"District of Columbia",
-}
-NAME_TO_ABBR = {v.lower(): k for k, v in STATE_NAMES.items()}
-
-REGIONS = {
-    "Northeast / Mid-Atlantic": {"CT","DE","DC","ME","MD","MA","NH","NJ","NY","PA","RI","VT","VA","WV"},
-    "Southeast": {"AL","FL","GA","KY","LA","MS","NC","SC","TN"},
-    "Midwest / Great Lakes": {"IL","IN","MI","MN","OH","WI","IA","MO"},
-    "Plains": {"AR","KS","NE","ND","OK","SD","TX"},
-    "Mountain West": {"CO","ID","MT","NV","UT","WY","AZ","NM"},
-    "West Coast": {"CA","OR","WA","AK","HI"},
-}
-
-# Event words are intentionally broad screening terms, not a guarantee that
-# every weather hazard affecting a road will be captured.
-CRITICAL_WORDS = (
-    "tornado warning", "flash flood warning", "blizzard warning",
-    "ice storm warning", "hurricane warning", "extreme wind warning",
-    "storm surge warning", "tsunami warning", "snow squall warning",
-)
-HIGH_WORDS = (
-    "severe thunderstorm warning", "winter storm warning",
-    "high wind warning", "flood warning", "coastal flood warning",
-    "hurricane watch", "tropical storm warning", "wind advisory",
-    "winter weather advisory", "freezing rain", "freezing drizzle",
-    "dense fog advisory", "dust storm warning", "fire warning",
-    "red flag warning", "excessive heat warning",
-)
-WIND_WORDS = ("wind", "gust", "straight-line", "crosswind", "blow-over")
-ICE_SNOW_WORDS = (
-    "snow", "ice", "freezing", "sleet", "black ice", "snow squall",
-    "blizzard", "winter storm",
-)
-RELEVANT_WORDS = (
-    "tornado", "thunderstorm", "wind", "gust", "snow", "ice", "freezing",
-    "sleet", "blizzard", "winter storm", "snow squall", "flood",
-    "coastal flood", "hurricane", "tropical storm", "storm surge",
-    "fog", "dust", "smoke", "ash", "heat", "fire", "red flag",
-    "avalanche", "waterspout", "hail", "cold", "wind chill",
-)
+    subject = (
+        f"Weather Dispatch: {counts[1]} Critical | {counts[2]} High | "
+        f"{counts[3]} Moderate — {now:%b %d %I:%M %p ET}"
+    )
+    if fetch_error:
+        subject = "DATA ERROR — " + subject
+    return subject, html_body
 
 
-def esc(value):
-    return html.escape(str(value or ""), quote=True)
+def send_email(subject, html_body):
+    sender = os.environ.get("SENDER_EMAIL", "").strip()
+    password = os.environ.get("SENDER_APP_PASSWORD", "").strip()
+    recipient = os.environ.get("RECIPIENT_EMAIL", "").strip()
 
+    missing = [
+        name for name, value in (
+            ("SENDER_EMAIL", sender),
+            ("SENDER_APP_PASSWORD", password),
+            ("RECIPIENT_EMAIL", recipient),
+        ) if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required GitHub secret/environment variable(s): "
+            + ", ".join(missing)
+        )
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"] = sender
+    message["To"] = recipient
+    message.attach(MIMEText(
+        "Your email client does not support HTML. The weather report is available in the HTML version.",
+        "plain", "utf-8"
+    ))
+    message.attach(MIMEText(html_body, "html", "utf-8"))
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL(
+        "smtp.gmail.com", 465, context=context, timeout=30
+    ) as server:
+        server.login(sender, password)
+        server.sendmail(sender, [recipient], message.as_string())
+
+
+def main():
+    fetch_error = None
+    alerts = []
+    try:
+        features = fetch_alerts()
+        unique = {}
+        for feature in features:
+            alert = normalize_alert(feature)
+            if alert:
+                key = alert["id"] or (
+                    alert["event"], alert["area"], alert["effective"], alert["expires"]
+                )
+                unique[key] = alert
+        alerts = list(unique.values())
+    except Exception as exc:
+        fetch_error = str(exc)
+
+    subject, body = build_email(alerts, fetch_error)
+    send_email(subject, body)
+    print(
+        f"Weather report email sent. Qualifying alerts: {len(alerts)}. "
+        f"Fetch error: {bool(fetch_error)}"
+    )
+
+    # The email is sent first so the data problem is visible in the report.
+    # Then fail the workflow to make the retrieval issue visible in GitHub Actions.
+    if fetch_error:
+        raise RuntimeError(fetch_error)
+
+
+if __name__ == "__main__":
+    main()
