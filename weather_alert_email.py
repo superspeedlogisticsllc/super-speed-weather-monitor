@@ -331,14 +331,14 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
             tier_counts = Counter(a["tier"] for a in unique)
             hazards = sorted({a["event"] for a in items})
             badges = " ".join(
-                f'<a href="{esc(PAGES_BASE_URL)}/#detail-{esc(state)}-tier-{t}" '
+                f'<a href="{esc(PAGES_BASE_URL)}/{esc(state)}-tier-{t}.html" '
                 f'style="display:inline-block;background:{colors[t]};color:white;padding:5px 8px;'
                 f'border-radius:3px;margin:2px;text-decoration:none;font-weight:bold;">'
                 f'{labels[t]} {tier_counts[t]} — click for details</a>'
                 for t in (1,2,3) if tier_counts[t]
             )
             hazard_text = "; ".join(hazards[:4]) + (f"; +{len(hazards)-4} more" if len(hazards)>4 else "")
-            rows.append(f'<div style="border:1px solid #d1d5db;border-left:5px solid #64748b;padding:10px 12px;margin:8px 0;"><b style="font-size:17px;"><a href="{esc(PAGES_BASE_URL)}/#detail-{esc(state)}" style="color:#1d4ed8;text-decoration:underline;">{esc(state)}</a></b> <span style="color:#4b5563;font-size:12px;">(<a href="{esc(PAGES_BASE_URL)}/#detail-{esc(state)}" style="color:#1d4ed8;">{len(items)} alert-state occurrences — click for dates &amp; times</a>)</span><div style="margin:5px 0;">{badges}</div><p style="margin:5px 0;"><b>Hazards:</b> {esc(hazard_text)}</p><p style="margin:5px 0;"><b>Major cities / metro areas to watch:</b> {esc(major_cities.get(state, "Not listed"))}</p></div>')
+            rows.append(f'<div style="border:1px solid #d1d5db;border-left:5px solid #64748b;padding:10px 12px;margin:8px 0;"><b style="font-size:17px;"><a href="{esc(PAGES_BASE_URL)}/{esc(state)}.html" style="color:#1d4ed8;text-decoration:underline;">{esc(state)}</a></b> <span style="color:#4b5563;font-size:12px;">(<a href="{esc(PAGES_BASE_URL)}/{esc(state)}.html" style="color:#1d4ed8;">{len(items)} alert-state occurrences — click for dates &amp; times</a>)</span><div style="margin:5px 0;">{badges}</div><p style="margin:5px 0;"><b>Hazards:</b> {esc(hazard_text)}</p><p style="margin:5px 0;"><b>Major cities / metro areas to watch:</b> {esc(major_cities.get(state, "Not listed"))}</p></div>')
         region_blocks.append(f'<h2 style="background:#1f2937;color:white;padding:10px;font-size:17px;margin-top:20px;">{esc(region)}</h2>' + "".join(rows))
         region_summary.append(f"{region}: {len(states)} affected state(s)")
 
@@ -351,6 +351,7 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
     # City names are shown as regional reference points only; NWS alerts often cover
     # counties/zones, so the script never claims a city is affected without polygon testing.
     state_detail_blocks = []
+    state_detail_data = {}
     for state in sorted(by_state):
         unique_items = {}
         for item in by_state[state]:
@@ -368,6 +369,7 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
                 f'<p style="margin:6px 0;"><b>Dispatch impact:</b> {esc(item["impact"][:700])}</p>'
                 f'<p style="margin:6px 0;">{link}</p></div>'
             )
+        state_detail_data[state] = {tier: list(rows) for tier, rows in detail_rows_by_tier.items()}
         tier_sections = []
         for tier in (1, 2, 3):
             if detail_rows_by_tier[tier]:
@@ -398,10 +400,43 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
     footer = '<hr><p style="font-size:12px;color:#4b5563;">Live source: National Weather Service API (api.weather.gov), active alerts endpoint. All timestamps are Eastern Time. This is an operational screening aid, not a safety determination. Verify road conditions, closures, forecasts, and company stop-work procedures before dispatch. GitHub Actions scheduled runs may be delayed.</p>'
     shell_start = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:18px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;"><div id="top" style="max-width:900px;margin:auto;background:white;padding:20px;border-radius:8px;">'
     email_html = shell_start + common_header + summary_content + f'<p style="padding:12px;background:#eff6ff;border:1px solid #bfdbfe;">For detailed alert dates, times, affected areas, and official NWS notices, use the clickable state and severity links above. Details open on a separate page.</p>' + footer + '</div></body></html>'
-    detail_intro = '<h2>Detailed State Weather Alerts</h2><p>Choose the state and alert level from your email to jump directly to that section. Alert effective and expiration times apply to the NWS-covered area shown, not automatically to every city listed.</p>'
-    detail_html = shell_start + common_header + detail_intro + (''.join(state_detail_blocks) or '<p>No state alert details are available.</p>') + footer + '</div></body></html>'
+    # Publish a separate, filtered HTML page for each state and each state/tier pair.
+    # No all-states detail page is used by the email links.
+    detail_pages = {}
+    for state, tiers in state_detail_data.items():
+        city_note = (
+            f'<p style="font-size:13px;color:#4b5563;"><b>Major city / metro reference points:</b> '
+            f'{esc(major_cities.get(state, "Not listed"))}</p>'
+            '<p style="font-size:12px;color:#92400e;background:#fffbeb;padding:9px;">'
+            'The dates and times apply to each NWS alert and its stated covered area. They do not '
+            'independently confirm that every listed city is inside the alert boundary. Open the '
+            'official NWS notice for its map and exact coverage.</p>'
+        )
+        all_state_rows = ''.join(''.join(tiers[t]) for t in (1, 2, 3))
+        state_content = (
+            f'<h2>{esc(state)} — All qualifying alerts</h2>{city_note}'
+            + (all_state_rows or '<p>No qualifying alerts for this state.</p>')
+            + '<p><a href="./index.html">Back to national report</a></p>'
+        )
+        detail_pages[f'{state}.html'] = shell_start + common_header + state_content + footer + '</div></body></html>'
+        for tier in (1, 2, 3):
+            if tiers[tier]:
+                tier_content = (
+                    f'<h2>{esc(state)} — {labels[tier]} alerts ({len(tiers[tier])})</h2>'
+                    f'{city_note}' + ''.join(tiers[tier])
+                    + f'<p><a href="./{state}.html">Back to {esc(state)} all-alert overview</a> · '
+                    '<a href="./index.html">Back to national report</a></p>'
+                )
+                detail_pages[f'{state}-tier-{tier}.html'] = shell_start + common_header + tier_content + footer + '</div></body></html>'
+    # index.html is only a simple landing page; it does not contain the alert details.
+    index_content = (
+        '<h2>Weather alert detail pages</h2>'
+        '<p>Use the state and alert-level links in the email to open a filtered page.</p>'
+        '<p>This page intentionally does not list all state alerts.</p>'
+    )
+    detail_pages['index.html'] = shell_start + common_header + index_content + footer + '</div></body></html>'
     subject = f"Weather Dispatch Overview: {counts[1]} Critical | {counts[2]} High | {counts[3]} Moderate — {now:%b %d %I:%M %p ET}"
-    return subject, email_html, detail_html
+    return subject, email_html, detail_pages
 
 def send_email(subject, html_body):
     sender = os.environ.get("SENDER_EMAIL", "").strip()
@@ -458,10 +493,11 @@ def main():
     except Exception as exc:
         fetch_error = str(exc)
 
-    subject, body, detail_page = build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error)
+    subject, body, detail_pages = build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error)
     os.makedirs("site", exist_ok=True)
-    with open(os.path.join("site", "index.html"), "w", encoding="utf-8") as page_file:
-        page_file.write(detail_page)
+    for relative_name, page_html in detail_pages.items():
+        with open(os.path.join("site", relative_name), "w", encoding="utf-8") as page_file:
+            page_file.write(page_html)
     if os.environ.get("DEFER_EMAIL", "").strip() == "1":
         with open(".weather_email_payload.json", "w", encoding="utf-8") as payload_file:
             json.dump({"subject": subject, "html": body}, payload_file)
