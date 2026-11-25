@@ -20,6 +20,7 @@ import os
 import re
 import time
 import html
+import sys
 
 NWS_URL = "https://api.weather.gov/alerts/active?status=actual&message_type=alert,update"
 TIMEOUT_SECONDS = 30
@@ -27,6 +28,7 @@ MAX_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 2
 MAX_PAGES = 20
 EASTERN = ZoneInfo("America/New_York")
+PAGES_BASE_URL = os.environ.get("PAGES_BASE_URL", "https://superspeedlogisticsllc.github.io/super-speed-weather-monitor").rstrip("/")
 
 # SAME geocodes are numeric: 0 + two-digit state FIPS + three-digit county.
 # UGC geocodes are alphabetic: state abbreviation + county/zone code.
@@ -329,14 +331,14 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
             tier_counts = Counter(a["tier"] for a in unique)
             hazards = sorted({a["event"] for a in items})
             badges = " ".join(
-                f'<a href="#detail-{esc(state)}-tier-{t}" '
+                f'<a href="{esc(PAGES_BASE_URL)}/#detail-{esc(state)}-tier-{t}" '
                 f'style="display:inline-block;background:{colors[t]};color:white;padding:5px 8px;'
                 f'border-radius:3px;margin:2px;text-decoration:none;font-weight:bold;">'
                 f'{labels[t]} {tier_counts[t]} — click for details</a>'
                 for t in (1,2,3) if tier_counts[t]
             )
             hazard_text = "; ".join(hazards[:4]) + (f"; +{len(hazards)-4} more" if len(hazards)>4 else "")
-            rows.append(f'<div style="border:1px solid #d1d5db;border-left:5px solid #64748b;padding:10px 12px;margin:8px 0;"><b style="font-size:17px;"><a href="#detail-{esc(state)}" style="color:#1d4ed8;text-decoration:underline;">{esc(state)}</a></b> <span style="color:#4b5563;font-size:12px;">(<a href="#detail-{esc(state)}" style="color:#1d4ed8;">{len(items)} alert-state occurrences — click for dates &amp; times</a>)</span><div style="margin:5px 0;">{badges}</div><p style="margin:5px 0;"><b>Hazards:</b> {esc(hazard_text)}</p><p style="margin:5px 0;"><b>Major cities / metro areas to watch:</b> {esc(major_cities.get(state, "Not listed"))}</p></div>')
+            rows.append(f'<div style="border:1px solid #d1d5db;border-left:5px solid #64748b;padding:10px 12px;margin:8px 0;"><b style="font-size:17px;"><a href="{esc(PAGES_BASE_URL)}/#detail-{esc(state)}" style="color:#1d4ed8;text-decoration:underline;">{esc(state)}</a></b> <span style="color:#4b5563;font-size:12px;">(<a href="{esc(PAGES_BASE_URL)}/#detail-{esc(state)}" style="color:#1d4ed8;">{len(items)} alert-state occurrences — click for dates &amp; times</a>)</span><div style="margin:5px 0;">{badges}</div><p style="margin:5px 0;"><b>Hazards:</b> {esc(hazard_text)}</p><p style="margin:5px 0;"><b>Major cities / metro areas to watch:</b> {esc(major_cities.get(state, "Not listed"))}</p></div>')
         region_blocks.append(f'<h2 style="background:#1f2937;color:white;padding:10px;font-size:17px;margin-top:20px;">{esc(region)}</h2>' + "".join(rows))
         region_summary.append(f"{region}: {len(states)} affected state(s)")
 
@@ -385,20 +387,21 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
             + '<p><a href="#top" style="color:#1d4ed8;">Back to report top</a></p></div>'
         )
     fetched_text = fetched_at.astimezone(EASTERN).strftime("%A, %B %d, %Y at %I:%M:%S %p ET") if fetched_at else "Unavailable — fetch failed"
-    html_body = f'''<!doctype html><html><body style="margin:0;padding:18px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;"><div id="top" style="max-width:900px;margin:auto;background:white;padding:20px;border-radius:8px;">
-    <div style="background:#0f172a;color:white;padding:18px;border-radius:6px;"><h1 style="margin:0;font-size:23px;">Super Speed Logistics — U.S. Weather Dispatch Overview</h1><p>Email generated {esc(now.strftime('%A, %B %d, %Y at %I:%M %p ET'))}</p><p>Live NWS retrieval: {esc(fetched_text)} | Automated 4-hour monitor</p></div>
-    {error_html}<h2>National Alert Summary</h2><table role="presentation" style="width:100%;text-align:center;border-collapse:collapse;"><tr><td style="padding:12px;background:#fee2e2;">CRITICAL<br><b style="font-size:25px;">{counts[1]}</b></td><td style="padding:12px;background:#ffedd5;">HIGH<br><b style="font-size:25px;">{counts[2]}</b></td><td style="padding:12px;background:#fef3c7;">MODERATE<br><b style="font-size:25px;">{counts[3]}</b></td></tr></table>
+    common_header = f'''<div style="background:#0f172a;color:white;padding:18px;border-radius:6px;"><h1 style="margin:0;font-size:23px;">Super Speed Logistics — U.S. Weather Dispatch</h1><p>Generated {esc(now.strftime('%A, %B %d, %Y at %I:%M %p ET'))}</p><p>Live NWS retrieval: {esc(fetched_text)} | Automated 4-hour monitor</p></div>'''
+    summary_content = f'''{error_html}<h2>National Alert Summary</h2><table role="presentation" style="width:100%;text-align:center;border-collapse:collapse;"><tr><td style="padding:12px;background:#fee2e2;">CRITICAL<br><b style="font-size:25px;">{counts[1]}</b></td><td style="padding:12px;background:#ffedd5;">HIGH<br><b style="font-size:25px;">{counts[2]}</b></td><td style="padding:12px;background:#fef3c7;">MODERATE<br><b style="font-size:25px;">{counts[3]}</b></td></tr></table>
     <p><b>Unique qualifying alerts:</b> {len(alerts)} | <b>States represented:</b> {len(by_state)} | <b>NWS records retrieved:</b> {raw_nws_count} | <b>API pages:</b> {page_count}</p>{quiet_html}
     <h2>Regional Overview</h2><ul>{''.join(f'<li>{esc(x)}</li>' for x in region_summary) or '<li>No affected regions.</li>'}</ul>
     <h2>Top 10 States to Watch</h2><ol>{top_html}</ol>
     <div style="background:#fee2e2;border-left:5px solid #b91c1c;padding:12px;margin:12px 0;"><b>Wind / Blow-Over Risk States:</b><br>{esc(wind_html)}</div>
     <div style="background:#e0f2fe;border-left:5px solid #0369a1;padding:12px;margin:12px 0;"><b>Snow / Ice Risk States:</b><br>{esc(snow_html)}</div>
-    <h2>States and Major Cities by Region</h2>{''.join(region_blocks) or '<p>No state summaries to display.</p>'}
-    <h2>Click-through State Alert Timelines</h2><p>Click a state name or occurrence count for its complete timeline, or click an individual CRITICAL, HIGH, or MODERATE count to jump directly to that tier’s alerts, dates, times, covered areas, and official NWS notices.</p>{''.join(state_detail_blocks) or '<p>No state alert timelines to display.</p>'}
-    <p style="margin-top:18px;padding:10px;background:#f3f4f6;font-size:12px;color:#4b5563;"><b>City note:</b> Major cities are regional reference points in states with active alerts. The NWS start/expiration times apply to the alert's covered area, not automatically to every city listed. Exact city-level confirmation requires checking the alert polygon or official NWS map. County-by-county and zone-by-zone summaries remain omitted.</p>
-    <hr><p style="font-size:12px;color:#4b5563;">Live source: National Weather Service API (api.weather.gov), active alerts endpoint. All timestamps are Eastern Time. This is an operational screening aid, not a safety determination. Verify road conditions, closures, forecasts, and company stop-work procedures before dispatch. GitHub Actions scheduled runs may be delayed.</p></div></body></html>'''
+    <h2>States and Major Cities by Region</h2>{''.join(region_blocks) or '<p>No state summaries to display.</p>'}'''
+    footer = '<hr><p style="font-size:12px;color:#4b5563;">Live source: National Weather Service API (api.weather.gov), active alerts endpoint. All timestamps are Eastern Time. This is an operational screening aid, not a safety determination. Verify road conditions, closures, forecasts, and company stop-work procedures before dispatch. GitHub Actions scheduled runs may be delayed.</p>'
+    shell_start = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:18px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;"><div id="top" style="max-width:900px;margin:auto;background:white;padding:20px;border-radius:8px;">'
+    email_html = shell_start + common_header + summary_content + f'<p style="padding:12px;background:#eff6ff;border:1px solid #bfdbfe;">For detailed alert dates, times, affected areas, and official NWS notices, use the clickable state and severity links above. Details open on a separate page.</p>' + footer + '</div></body></html>'
+    detail_intro = '<h2>Detailed State Weather Alerts</h2><p>Choose the state and alert level from your email to jump directly to that section. Alert effective and expiration times apply to the NWS-covered area shown, not automatically to every city listed.</p>'
+    detail_html = shell_start + common_header + detail_intro + (''.join(state_detail_blocks) or '<p>No state alert details are available.</p>') + footer + '</div></body></html>'
     subject = f"Weather Dispatch Overview: {counts[1]} Critical | {counts[2]} High | {counts[3]} Moderate — {now:%b %d %I:%M %p ET}"
-    return subject, html_body
+    return subject, email_html, detail_html
 
 def send_email(subject, html_body):
     sender = os.environ.get("SENDER_EMAIL", "").strip()
@@ -426,6 +429,13 @@ def send_email(subject, html_body):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--send-pending":
+        with open(".weather_email_payload.json", encoding="utf-8") as payload_file:
+            payload = json.load(payload_file)
+        send_email(payload["subject"], payload["html"])
+        print("Weather report email sent after the detailed page was published.")
+        return
+
     fetch_error = None
     alerts = []
     raw_nws_count = 0
@@ -448,10 +458,18 @@ def main():
     except Exception as exc:
         fetch_error = str(exc)
 
-    subject, body = build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error)
-    send_email(subject, body)
+    subject, body, detail_page = build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error)
+    os.makedirs("site", exist_ok=True)
+    with open(os.path.join("site", "index.html"), "w", encoding="utf-8") as page_file:
+        page_file.write(detail_page)
+    if os.environ.get("DEFER_EMAIL", "").strip() == "1":
+        with open(".weather_email_payload.json", "w", encoding="utf-8") as payload_file:
+            json.dump({"subject": subject, "html": body}, payload_file)
+        print("Weather report and detail page generated; email deferred until after page publication.")
+    else:
+        send_email(subject, body)
     print(
-        f"Weather report email sent. NWS records retrieved: {raw_nws_count}; "
+        f"Weather report processing complete. NWS records retrieved: {raw_nws_count}; "
         f"qualifying unique alerts: {len(alerts)}; pages: {page_count}; fetch error: {bool(fetch_error)}"
     )
     if fetch_error:
