@@ -3,7 +3,7 @@ name: U.S. Cargo Van Weather Alert Email
 
 on:
   schedule:
-    - cron: "17 */4 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -44,7 +44,6 @@ jobs:
         with:
           path: site
 
-      # Wait for GitHub to make the uploaded artifact visible
       - name: Wait for artifact to become visible
         run: sleep 10
 
