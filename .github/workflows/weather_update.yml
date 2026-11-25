@@ -1,3 +1,4 @@
+
 name: U.S. Cargo Van Weather Alert Email
 
 on:
@@ -18,12 +19,14 @@ jobs:
   send-weather-report:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     env:
       SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
       SENDER_APP_PASSWORD: ${{ secrets.SENDER_APP_PASSWORD }}
       RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
       PAGES_BASE_URL: https://superspeedlogisticsllc.github.io/super-speed-weather-monitor
       DEFER_EMAIL: "1"
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -40,6 +43,10 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
+
+      # Wait for GitHub to make the uploaded artifact visible
+      - name: Wait for artifact to become visible
+        run: sleep 10
 
       - name: Publish detailed alert page
         id: deployment
