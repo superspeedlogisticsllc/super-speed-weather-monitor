@@ -328,7 +328,13 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
             unique = {a["id"] or (a["event"], a["area"], a["effective"]): a for a in items}.values()
             tier_counts = Counter(a["tier"] for a in unique)
             hazards = sorted({a["event"] for a in items})
-            badges = " ".join(f'<span style="display:inline-block;background:{colors[t]};color:white;padding:4px 7px;border-radius:3px;margin:2px;">{labels[t]} {tier_counts[t]}</span>' for t in (1,2,3) if tier_counts[t])
+            badges = " ".join(
+                f'<a href="#detail-{esc(state)}-tier-{t}" '
+                f'style="display:inline-block;background:{colors[t]};color:white;padding:5px 8px;'
+                f'border-radius:3px;margin:2px;text-decoration:none;font-weight:bold;">'
+                f'{labels[t]} {tier_counts[t]} — click for details</a>'
+                for t in (1,2,3) if tier_counts[t]
+            )
             hazard_text = "; ".join(hazards[:4]) + (f"; +{len(hazards)-4} more" if len(hazards)>4 else "")
             rows.append(f'<div style="border:1px solid #d1d5db;border-left:5px solid #64748b;padding:10px 12px;margin:8px 0;"><b style="font-size:17px;"><a href="#detail-{esc(state)}" style="color:#1d4ed8;text-decoration:underline;">{esc(state)}</a></b> <span style="color:#4b5563;font-size:12px;">(<a href="#detail-{esc(state)}" style="color:#1d4ed8;">{len(items)} alert-state occurrences — click for dates &amp; times</a>)</span><div style="margin:5px 0;">{badges}</div><p style="margin:5px 0;"><b>Hazards:</b> {esc(hazard_text)}</p><p style="margin:5px 0;"><b>Major cities / metro areas to watch:</b> {esc(major_cities.get(state, "Not listed"))}</p></div>')
         region_blocks.append(f'<h2 style="background:#1f2937;color:white;padding:10px;font-size:17px;margin-top:20px;">{esc(region)}</h2>' + "".join(rows))
@@ -348,10 +354,10 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
         for item in by_state[state]:
             key = item["id"] or (item["event"], item["area"], item["effective"], item["expires"])
             unique_items[key] = item
-        detail_rows = []
+        detail_rows_by_tier = {1: [], 2: [], 3: []}
         for item in sorted(unique_items.values(), key=lambda x: (x["effective"], x["event"])):
             link = f'<a href="{esc(item["url"])}" style="color:#1d4ed8;">Open official NWS alert</a>' if item["url"] else "Official NWS link unavailable"
-            detail_rows.append(
+            detail_rows_by_tier[item["tier"]].append(
                 '<div style="border:1px solid #d1d5db;border-radius:5px;padding:11px;margin:9px 0;">'
                 f'<b>{esc(item["event"])}</b> — <span style="color:{colors[item["tier"]]};font-weight:bold;">{labels[item["tier"]]}</span>'
                 f'<p style="margin:6px 0;"><b>Begins / effective:</b> {esc(item["effective"])}</p>'
@@ -360,11 +366,21 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
                 f'<p style="margin:6px 0;"><b>Dispatch impact:</b> {esc(item["impact"][:700])}</p>'
                 f'<p style="margin:6px 0;">{link}</p></div>'
             )
+        tier_sections = []
+        for tier in (1, 2, 3):
+            if detail_rows_by_tier[tier]:
+                tier_sections.append(
+                    f'<div id="detail-{esc(state)}-tier-{tier}" style="padding:10px 0;">'
+                    f'<h4 style="margin:8px 0;color:{colors[tier]};">{labels[tier]} ALERTS ({len(detail_rows_by_tier[tier])})</h4>'
+                    + "".join(detail_rows_by_tier[tier])
+                    + '<p><a href="#top" style="color:#1d4ed8;">Back to report top</a> · '
+                    + f'<a href="#detail-{esc(state)}" style="color:#1d4ed8;">Back to {esc(state)} overview</a></p></div>'
+                )
         state_detail_blocks.append(
             f'<div id="detail-{esc(state)}" style="padding:12px 0;border-top:2px solid #cbd5e1;">'
             f'<h3 style="margin-bottom:5px;">{esc(state)} — Alert dates &amp; times</h3>'
             f'<p style="font-size:13px;color:#4b5563;">Major metro reference points: {esc(major_cities.get(state, "Not listed"))}</p>'
-            + "".join(detail_rows)
+            + "".join(tier_sections)
             + '<p style="font-size:12px;color:#92400e;background:#fffbeb;padding:9px;">City timing note: the dates and times above apply to each NWS alert and its stated covered area. They do not independently confirm that every major city listed above is inside the alert boundary. Open the NWS notice for the official map and exact local coverage.</p>'
             + '<p><a href="#top" style="color:#1d4ed8;">Back to report top</a></p></div>'
         )
@@ -378,7 +394,7 @@ def build_email(alerts, fetched_at, raw_nws_count, page_count, fetch_error=None)
     <div style="background:#fee2e2;border-left:5px solid #b91c1c;padding:12px;margin:12px 0;"><b>Wind / Blow-Over Risk States:</b><br>{esc(wind_html)}</div>
     <div style="background:#e0f2fe;border-left:5px solid #0369a1;padding:12px;margin:12px 0;"><b>Snow / Ice Risk States:</b><br>{esc(snow_html)}</div>
     <h2>States and Major Cities by Region</h2>{''.join(region_blocks) or '<p>No state summaries to display.</p>'}
-    <h2>Click-through State Alert Timelines</h2><p>Click any state name or occurrence count above to jump to its alert dates, times, covered areas, and official NWS notices.</p>{''.join(state_detail_blocks) or '<p>No state alert timelines to display.</p>'}
+    <h2>Click-through State Alert Timelines</h2><p>Click a state name or occurrence count for its complete timeline, or click an individual CRITICAL, HIGH, or MODERATE count to jump directly to that tier’s alerts, dates, times, covered areas, and official NWS notices.</p>{''.join(state_detail_blocks) or '<p>No state alert timelines to display.</p>'}
     <p style="margin-top:18px;padding:10px;background:#f3f4f6;font-size:12px;color:#4b5563;"><b>City note:</b> Major cities are regional reference points in states with active alerts. The NWS start/expiration times apply to the alert's covered area, not automatically to every city listed. Exact city-level confirmation requires checking the alert polygon or official NWS map. County-by-county and zone-by-zone summaries remain omitted.</p>
     <hr><p style="font-size:12px;color:#4b5563;">Live source: National Weather Service API (api.weather.gov), active alerts endpoint. All timestamps are Eastern Time. This is an operational screening aid, not a safety determination. Verify road conditions, closures, forecasts, and company stop-work procedures before dispatch. GitHub Actions scheduled runs may be delayed.</p></div></body></html>'''
     subject = f"Weather Dispatch Overview: {counts[1]} Critical | {counts[2]} High | {counts[3]} Moderate — {now:%b %d %I:%M %p ET}"
